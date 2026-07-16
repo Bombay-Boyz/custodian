@@ -1,4 +1,64 @@
+# --- Cabal ---
 dist-newstyle/
 .ghc.environment.*
+cabal.project.local
+cabal.project.local~
+cabal.sandbox.config
+.cabal-sandbox/
+*.cabal.orig
+
+# --- Stack ---
+.stack-work/
+stack.yaml.lock
+
+# --- GHC build artifacts ---
 *.hi
 *.o
+*.dyn_hi
+*.dyn_o
+*.p_hi
+*.p_o
+*.conf
+*.chi
+*.chs.h
+*.tix
+*.prof
+*.hp
+*.aux
+
+# --- HLS / haskell-language-server ---
+.hie/
+.hie-bios
+hie.yaml.local
+
+# --- ghcup (local toolchain metadata, if ever init'd inside repo) ---
+.ghcup/
+
+# --- hpc coverage output ---
+.hpc/
+*.tix
+
+# --- Haddock ---
+haddock/
+*.haddock
+
+# --- Nix (relevant once the Phase 2 flake lands) ---
+result
+result-*
+.direnv/
+
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- Logs / scratch ---
+*.log
+.env
+.envrc.local
+
+# --- OS cruft ---
+Thumbs.db
