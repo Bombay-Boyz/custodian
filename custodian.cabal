@@ -1,0 +1,53 @@
+cabal-version:      3.0
+name:               custodian
+version:            0.1.0.0
+synopsis:           A Haskell binding for libbpf, built to be read like a proof
+license:            BSD-3-Clause
+build-type:         Simple
+tested-with:        GHC ==9.14.1
+
+common warnings
+  ghc-options: -Wall -Werror
+
+library
+  import:           warnings
+  hs-source-dirs:   src
+  exposed-modules:  Custodian
+                  , Custodian.Errors
+                  , Custodian.Mock
+  build-depends:    base >=4.19 && <5
+                  , linear-base
+  default-language: GHC2021
+  default-extensions: LinearTypes
+                    , DataKinds
+                    , KindSignatures
+                    , GADTs
+
+executable custodian-example
+  import:           warnings
+  hs-source-dirs:   app
+  main-is:          Main.hs
+  build-depends:    base
+                  , custodian
+  default-language: GHC2021
+
+test-suite custodian-test
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  build-depends:    base
+                  , custodian
+                  , hedgehog
+                  , tasty
+                  , tasty-hedgehog
+  default-language: GHC2021
+
+test-suite negative-tests
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   negative-tests
+  main-is:          Negative.hs
+  buildable:        False
+  build-depends:    base
+                  , custodian
+  default-language: GHC2021
