@@ -31,6 +31,7 @@ executable custodian-example
   main-is:          Main.hs
   build-depends:    base
                   , custodian
+                  , linear-base
   default-language: GHC2021
 
 test-suite custodian-test
@@ -40,6 +41,7 @@ test-suite custodian-test
   main-is:          Spec.hs
   build-depends:    base
                   , custodian
+                  , linear-base
                   , hedgehog
                   , tasty
                   , tasty-hedgehog
