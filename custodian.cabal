@@ -16,9 +16,11 @@ library
                   , Custodian.Errors
                   , Custodian.Mock
   build-depends:    base >=4.19 && <5
+                  , relude
                   , linear-base
   default-language: GHC2021
-  default-extensions: LinearTypes
+  default-extensions: NoImplicitPrelude
+                    , LinearTypes
                     , DataKinds
                     , KindSignatures
                     , GADTs

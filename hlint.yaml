@@ -1,0 +1,1 @@
+- warn: {name: "Use head", within: []}   # placeholder: partial-function bans layered on top of Relude's hiding
