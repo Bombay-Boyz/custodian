@@ -7,7 +7,7 @@ build-type:         Simple
 tested-with:        GHC ==9.14.1
 
 common warnings
-  ghc-options: -Wall -Werror -fwrite-ide-info
+  ghc-options: -Wall -Werror
 
 flag negative-tests-enabled
   description: Enable building negative-tests. Only ever turned on by
@@ -22,6 +22,8 @@ library
   exposed-modules:  Custodian
                   , Custodian.Errors
                   , Custodian.Mock
+                  , Custodian.Raw
+  pkgconfig-depends: libbpf
   build-depends:    base >=4.19 && <5
                   , relude
                   , linear-base
