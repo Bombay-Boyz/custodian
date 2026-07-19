@@ -1,1 +1,6 @@
-- warn: {name: "Use head", within: []}   # placeholder: partial-function bans layered on top of Relude's hiding
+# hlint is not currently usable on GHC 9.14.1: as of this writing, the
+# latest hlint release (3.10) pins ghc-lib-parser to >=9.12 && <9.13,
+# and the `-ghc-lib` flag (tracking the installed GHC's own `ghc`
+# package instead) doesn't resolve either. Revisit once upstream
+# catches up. In the meantime, -Wall -Werror and Relude's removal of
+# partial functions from scope cover most of what hlint would add here.
