@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE QualifiedDo #-}
 module Main (main) where
 
@@ -5,17 +6,20 @@ import Prelude hiding (either)
 import qualified Control.Functor.Linear as Control
 import qualified System.IO.Linear as Linear
 import Prelude.Linear (Ur (..), either, move)
-import Custodian (openObject, loadObject, attachObject, teardown)
+import Custodian (BpfObject, LifecycleState (..), openObject, loadObject, attachObject, teardown)
 import Custodian.Errors (CustodianError)
+import Custodian.Mock (MockHandle)
 import Hedgehog
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Test.Tasty
 import Test.Tasty.Hedgehog (testProperty)
 
+type MockBpfObject = BpfObject MockHandle MockHandle
+
 runLifecycle :: FilePath -> Linear.IO (Either CustodianError ())
 runLifecycle path = Control.do
-  r1 <- openObject path
+  r1 <- (openObject path :: Linear.IO (Either CustodianError (MockBpfObject 'Opened)))
   either
     (\e -> Control.pure (Left e))
     ( \obj1 -> Control.do
@@ -60,7 +64,7 @@ prop_mockEarlyTeardownAfterLoadSucceeds :: Property
 prop_mockEarlyTeardownAfterLoadSucceeds = property $ do
   path <- forAll (Gen.string (Range.linear 1 64) Gen.alphaNum)
   outcome <- evalIO $ Linear.withLinearIO $ Control.do
-    r1 <- openObject path
+    r1 <- (openObject path :: Linear.IO (Either CustodianError (MockBpfObject 'Opened)))
     either
       (\e -> case move e of Ur e' -> Control.pure (Ur (Left e')))
       ( \obj1 -> Control.do

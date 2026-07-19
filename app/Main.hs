@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE QualifiedDo #-}
 module Main (main) where
 
@@ -5,12 +6,20 @@ import Prelude hiding (either)
 import qualified Control.Functor.Linear as Control
 import qualified System.IO.Linear as Linear
 import Prelude.Linear (Ur (..), either, move)
-import Custodian (openObject, loadObject, attachObject, teardown)
+import Custodian (BpfObject, LifecycleState (..), openObject, loadObject, attachObject, teardown)
 import Custodian.Errors (CustodianError)
+import Custodian.Mock (MockHandle)
+
+-- | Pinned to the mock backend for both type parameters -- this is the
+-- one place in the module that decides "run against Mock", everything
+-- else (openObject/loadObject/attachObject/teardown) is written against
+-- the abstract capability classes and knows nothing about Mock
+-- specifically.
+type MockBpfObject = BpfObject MockHandle MockHandle
 
 runLifecycle :: FilePath -> Linear.IO (Either CustodianError ())
 runLifecycle path = Control.do
-  r1 <- openObject path
+  r1 <- (openObject path :: Linear.IO (Either CustodianError (MockBpfObject 'Opened)))
   either
     (\e -> Control.pure (Left e))
     ( \obj1 -> Control.do

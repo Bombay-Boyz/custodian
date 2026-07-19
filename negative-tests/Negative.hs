@@ -4,6 +4,7 @@ import Prelude
 import qualified Control.Functor.Linear as Control
 import qualified System.IO.Linear as Linear
 import Custodian (BpfObject, LifecycleState (..), Teardownable (..))
+import Custodian.Mock (MockHandle)
 
 -- | THIS MODULE MUST NOT COMPILE.
 --
@@ -16,7 +17,7 @@ import Custodian (BpfObject, LifecycleState (..), Teardownable (..))
 --
 -- Expected failure: a linearity error naming 'obj' (multiplicity
 -- mismatch, or "variable used more than once"), not a normal type error.
-badDoubleTeardown :: BpfObject 'Attached %1 -> Linear.IO ()
+badDoubleTeardown :: BpfObject MockHandle MockHandle 'Attached %1 -> Linear.IO ()
 badDoubleTeardown obj = Control.do
   teardown obj
   teardown obj

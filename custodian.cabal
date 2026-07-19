@@ -33,6 +33,8 @@ library
                     , DataKinds
                     , KindSignatures
                     , GADTs
+                    , MultiParamTypeClasses
+                    , FlexibleInstances
 
 executable custodian-example
   import:           warnings
@@ -74,3 +76,5 @@ test-suite negative-tests
                     , KindSignatures
                     , GADTs
                     , QualifiedDo
+                    , MultiParamTypeClasses
+                    , FlexibleInstances
