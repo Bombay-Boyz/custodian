@@ -23,6 +23,7 @@ library
                   , Custodian.Errors
                   , Custodian.Mock
                   , Custodian.Raw
+                  , Custodian.Live
   pkgconfig-depends: libbpf
   build-depends:    base >=4.19 && <5
                   , relude
