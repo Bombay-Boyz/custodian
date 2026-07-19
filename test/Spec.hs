@@ -51,10 +51,38 @@ prop_mockLifecycleSucceeds = property $ do
     Left err -> annotateShow err >> failure
     Right () -> success
 
+-- | A 'BpfObject' can legitimately be torn down right after 'loadObject',
+-- without ever being attached -- e.g. the caller decides not to attach
+-- after inspecting the loaded object, or attach isn't needed for this
+-- use case. This exercises 'Teardownable''s 'Loaded' instance directly
+-- (previously unused anywhere in the codebase, per weeder).
+prop_mockEarlyTeardownAfterLoadSucceeds :: Property
+prop_mockEarlyTeardownAfterLoadSucceeds = property $ do
+  path <- forAll (Gen.string (Range.linear 1 64) Gen.alphaNum)
+  outcome <- evalIO $ Linear.withLinearIO $ Control.do
+    r1 <- openObject path
+    either
+      (\e -> case move e of Ur e' -> Control.pure (Ur (Left e')))
+      ( \obj1 -> Control.do
+          r2 <- loadObject obj1
+          either
+            (\e -> case move e of Ur e' -> Control.pure (Ur (Left e')))
+            ( \obj2 -> Control.do
+                teardown obj2
+                Control.pure (Ur (Right ()))
+            )
+            r2
+      )
+      r1
+  case outcome of
+    Left err -> annotateShow err >> failure
+    Right () -> success
+
 main :: IO ()
 main =
   defaultMain $
     testGroup
       "custodian"
       [ testProperty "mock lifecycle open->load->attach->teardown succeeds" prop_mockLifecycleSucceeds
+      , testProperty "mock lifecycle open->load->teardown (no attach) succeeds" prop_mockEarlyTeardownAfterLoadSucceeds
       ]

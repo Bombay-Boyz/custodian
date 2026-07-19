@@ -7,7 +7,7 @@ build-type:         Simple
 tested-with:        GHC ==9.14.1
 
 common warnings
-  ghc-options: -Wall -Werror
+  ghc-options: -Wall -Werror -fwrite-ide-info
 
 flag negative-tests-enabled
   description: Enable building negative-tests. Only ever turned on by
