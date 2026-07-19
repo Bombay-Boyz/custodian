@@ -4,7 +4,7 @@ module Main (main) where
 import Prelude hiding (either)
 import qualified Control.Functor.Linear as Control
 import qualified System.IO.Linear as Linear
-import Prelude.Linear (Ur (..), either, consume, lseq)
+import Prelude.Linear (Ur (..), either, move)
 import Custodian (openObject, loadObject, attachObject, teardown)
 import Custodian.Errors (CustodianError)
 import Hedgehog
@@ -39,13 +39,17 @@ runLifecycle path = Control.do
 prop_mockLifecycleSucceeds :: Property
 prop_mockLifecycleSucceeds = property $ do
   path <- forAll (Gen.string (Range.linear 1 64) Gen.alphaNum)
-  succeeded <- evalIO $ Linear.withLinearIO $ Control.do
+  -- 'move' the error out of linear-land (via 'Ur') so a failure actually
+  -- shows what went wrong, rather than just "expected True, got False".
+  outcome <- evalIO $ Linear.withLinearIO $ Control.do
     r <- runLifecycle path
     either
-      (\e -> Control.pure (consume e `lseq` Ur False))
-      (\() -> Control.pure (Ur True))
+      (\e -> case move e of Ur e' -> Control.pure (Ur (Left e')))
+      (\() -> Control.pure (Ur (Right ())))
       r
-  succeeded === True
+  case outcome of
+    Left err -> annotateShow err >> failure
+    Right () -> success
 
 main :: IO ()
 main =

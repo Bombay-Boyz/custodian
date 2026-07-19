@@ -4,7 +4,7 @@ module Main (main) where
 import Prelude hiding (either)
 import qualified Control.Functor.Linear as Control
 import qualified System.IO.Linear as Linear
-import Prelude.Linear (Ur (..), either, consume, lseq)
+import Prelude.Linear (Ur (..), either, move)
 import Custodian (openObject, loadObject, attachObject, teardown)
 import Custodian.Errors (CustodianError)
 
@@ -35,12 +35,13 @@ main :: IO ()
 main = Linear.withLinearIO $ Control.do
   result <- runLifecycle "example.bpf.o"
   either
-    -- Explicitly 'consume' the error rather than trying to 'show' it --
-    -- getting a value *out* of a linear resource to log it is a real
-    -- open question (see note above), not something solved here.
-    ( \err -> Control.do
-        consume err `lseq` Linear.fromSystemIO (putStrLn "custodian: lifecycle failed")
-        Control.pure (Ur ())
+    -- 'move' pulls a plain, freely-reusable copy of the error out of
+    -- linear-land (via 'Ur') so it can actually be shown/logged, rather
+    -- than only ever discarded via 'consume'.
+    ( \err -> case move err of
+        Ur e -> Control.do
+          Linear.fromSystemIO (putStrLn ("custodian: lifecycle failed: " ++ show e))
+          Control.pure (Ur ())
     )
     ( \() -> Control.do
         Linear.fromSystemIO (putStrLn "custodian: lifecycle completed successfully (mock backend)")
