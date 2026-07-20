@@ -79,3 +79,21 @@ test-suite negative-tests
                     , QualifiedDo
                     , MultiParamTypeClasses
                     , FlexibleInstances
+
+test-suite live-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   live-tests
+  main-is:          LiveSpec.hs
+  -- Always buildable: compiling this test needs nothing privilege does
+  -- not have (no clang invocation happens until main runs). Whether it
+  -- does anything beyond print a skip notice is decided at *runtime* by
+  -- checking the effective UID, not by a build-time flag -- see
+  -- LiveSpec.hs. This is deliberately unlike negative-tests, which is
+  -- flag-gated because it must NOT build under normal circumstances.
+  build-depends:    base
+                  , custodian
+                  , linear-base
+                  , process
+                  , unix
+  default-language: GHC2021
