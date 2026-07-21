@@ -44,10 +44,16 @@ jobs:
       - name: cabal test live-tests, unprivileged (expect graceful skip)
         run: cabal test live-tests
 
-      - name: cabal test live-tests, privileged (real CAP_BPF load+attach)
-        run: sudo env "PATH=$PATH" cabal test live-tests
-
       - name: weeder (dead-code check)
         run: |
           cabal install weeder --overwrite-policy=always
           weeder
+
+      # Deliberately LAST: running anything privileged (sudo) mid-job can
+      # leave root-owned files in shared cabal cache directories, which
+      # then break later, unprivileged steps -- this bit us in an earlier
+      # version of this workflow (weeder's own cabal install failed with
+      # a permission error afterward). Nothing runs after this step for
+      # exactly that reason.
+      - name: cabal test live-tests, privileged (real CAP_BPF load+attach)
+        run: sudo env "PATH=$PATH" cabal test live-tests
