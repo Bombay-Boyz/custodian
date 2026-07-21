@@ -7,6 +7,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Custodian
   ( LifecycleState (..)
   , BpfObject
@@ -16,9 +17,12 @@ module Custodian
   , loadObject
   , attachObject
   , Teardownable (..)
+  , withLoadedBpfObject
   ) where
 
-import Prelude.Linear
+import Prelude.Linear hiding (IO)
+import Prelude (IO, pure)
+import qualified Control.Exception as Exception
 import qualified Control.Functor.Linear as Control
 import qualified System.IO.Linear as Linear
 import qualified Unsafe.Linear as Unsafe
@@ -134,3 +138,80 @@ instance (ObjectLifecycle objRes, AttachDetach objRes linkRes) => Teardownable o
     BpfObjectAttached h link -> Control.do
       rawDetach link
       rawClose h
+
+-- | Split a captured resource off a loaded object via 'dup2', so a
+-- copy can be closed over by an exception handler *before* the
+-- (still-intact) object is handed to a genuinely opaque callback. Same
+-- 'Unsafe.toLinear' justification as elsewhere in this module: a
+-- single-use reconstruction, safe in spirit, outside what GHC's
+-- case/pattern inference for linear equations can verify.
+splitLoaded
+  :: Dupable objRes
+  => BpfObject objRes linkRes 'Loaded %1
+  -> (objRes, BpfObject objRes linkRes 'Loaded)
+splitLoaded = Unsafe.toLinear $ \obj -> case obj of
+  BpfObjectLoaded h -> case dup2 h of
+    (h1, h2) -> (h1, BpfObjectLoaded h2)
+
+-- | Run a 'Linear.IO' action producing '()' as a plain, ordinary 'IO'
+-- action -- the boundary-crossing 'withLoadedBpfObject' needs to call
+-- 'rawClose' from inside 'Control.Exception''s (non-linear-aware)
+-- exception handling.
+runLinearUnit :: Linear.IO () -> IO ()
+runLinearUnit action = Linear.withLinearIO (Control.do action; Control.pure (Ur ()))
+
+-- | Run a callback against a loaded (not yet attached) BPF object,
+-- guaranteeing the object is closed even if the callback throws.
+--
+-- On the *normal* path, the callback is required by linearity to
+-- consume the handle (typically via 'teardown') before returning --
+-- the type checker enforces that, same as everywhere else in this
+-- module. On the *exception* path, a duplicated copy of the object
+-- resource is captured before the callback runs (via 'splitLoaded')
+-- and closed by a 'Control.Exception.onException' handler if the
+-- callback throws -- this is the *only* place in this module that
+-- reaches around linear discipline, and it exists solely to cover the
+-- gap linearity leaves under exceptions (vision doc §3.4). It does not
+-- weaken the compile-time guarantee for any path that completes
+-- normally. 'Exception.mask' guards the narrow window between
+-- capturing the resource and the exception handler actually being
+-- registered, matching how 'bracket' itself is implemented internally.
+--
+-- Deliberately does NOT attempt kernel-side "is a link still live"
+-- discovery: real @libbpf@ has no such query on a bare object/program
+-- pointer, only a system-wide link enumeration with its own real
+-- correctness problems (raw-fd cleanup, TOCTOU, privilege
+-- requirements) -- this was verified against the actual installed
+-- header, not assumed. 'withLoadedBpfObject' sidesteps the need for it
+-- entirely by never letting the callback attach in the first place.
+-- The attached case ('withAttachedBpfObject') is a deliberately
+-- separate, not-yet-implemented follow-up: it tracks its own progress
+-- through the attach step instead of asking the kernel after the fact.
+withLoadedBpfObject
+  :: forall objRes linkRes a
+   . (ObjectLifecycle objRes, Dupable objRes)
+  => FilePath
+  -> (BpfObject objRes linkRes 'Loaded %1 -> IO (Ur a))
+  -> IO (Either CustodianError a)
+withLoadedBpfObject path callback = do
+  step1 <-
+    Linear.withLinearIO $ Control.do
+      r1 <- (openObject path :: Linear.IO (Either CustodianError (BpfObject objRes linkRes 'Opened)))
+      either
+        (Unsafe.toLinear (\e -> Control.pure (Ur (Left e))))
+        ( \obj1 -> Control.do
+            r2 <- loadObject obj1
+            either
+              (Unsafe.toLinear (\e -> Control.pure (Ur (Left e))))
+              (Unsafe.toLinear (\obj2 -> Control.pure (Ur (Right obj2))))
+              r2
+        )
+        r1
+  case step1 of
+    Left err -> pure (Left err)
+    Right loadedObj -> Exception.mask (\restore -> do
+      let (capturedRes, calleeObj) = splitLoaded loadedObj
+      Ur result <-
+        restore (callback calleeObj)
+          `Exception.onException` runLinearUnit (rawClose capturedRes)
+      pure (Right result))

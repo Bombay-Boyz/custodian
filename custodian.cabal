@@ -97,3 +97,16 @@ test-suite live-tests
                   , process
                   , unix
   default-language: GHC2021
+
+test-suite emergency-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test-emergency
+  main-is:          EmergencySpec.hs
+  build-depends:    base
+                  , custodian
+                  , linear-base
+                  , hedgehog
+                  , tasty
+                  , tasty-hedgehog
+  default-language: GHC2021
