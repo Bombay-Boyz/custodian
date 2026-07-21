@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    # Ordinary GitHub-hosted runner, not a special self-hosted/privileged
+    # one -- these are real VMs (not restricted containers) with
+    # passwordless sudo, which should be enough for CAP_BPF/live-tests's
+    # real kernel load+attach. Unverified empirically as of writing this
+    # workflow (I can't run actual GitHub Actions from outside CI) --
+    # if live-tests fails specifically on permissions here, that's the
+    # first thing to revisit, not a self-hosted-runner requirement
+    # assumed prematurely.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies (clang, libbpf-dev)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libbpf-dev
+
+      - name: Set up GHC and cabal
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.14.1'
+          cabal-version: 'latest'
+
+      - name: cabal build all
+        run: cabal build all
+
+      - name: cabal test custodian-test (Hedgehog properties, mock backend)
+        run: cabal test custodian-test
+
+      - name: cabal test emergency-tests (emergencyClose properties)
+        run: cabal test emergency-tests
+
+      - name: Confirm negative-tests is genuinely rejected (double-teardown)
+        run: ./scripts/check-negative-tests.sh
+
+      - name: cabal test live-tests, unprivileged (expect graceful skip)
+        run: cabal test live-tests
+
+      - name: cabal test live-tests, privileged (real CAP_BPF load+attach)
+        run: sudo env "PATH=$PATH" cabal test live-tests
+
+      - name: weeder (dead-code check)
+        run: |
+          cabal install weeder --overwrite-policy=always
+          weeder
