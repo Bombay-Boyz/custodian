@@ -11,17 +11,22 @@ import Data.Unrestricted.Linear (Consumable (..), Dupable (..))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Exception (SomeException, try, throwIO)
-import Custodian (ObjectLifecycle (..), Teardownable (..), withLoadedBpfObject)
+import Custodian
+  ( ObjectLifecycle (..)
+  , AttachDetach (..)
+  , Teardownable (..)
+  , withLoadedBpfObject
+  , withAttachedBpfObject
+  )
+import Custodian.Errors (CustodianError (..))
 import Hedgehog
 import Test.Tasty
 import Test.Tasty.Hedgehog (testProperty)
 
--- | A trivial test-only resource type. Observable state lives in a
--- shared, module-level IORef rather than inside the handle itself: the
--- handle just needs to be freely 'Dupable' (a bare marker works fine
--- for that), and putting the state in one place lets the test inspect
--- it after 'withLoadedBpfObject' returns, without needing the handle
--- itself back out.
+--------------------------------------------------------------------------------
+-- withLoadedBpfObject tests (unchanged from before)
+--------------------------------------------------------------------------------
+
 data TestHandle = TestHandle
 
 {-# NOINLINE globalOpenFlag #-}
@@ -41,8 +46,6 @@ instance ObjectLifecycle TestHandle where
   rawLoad h = Control.pure (Right h)
   rawClose h = consume h `lseq` Linear.fromSystemIO (writeIORef globalOpenFlag False)
 
--- | The exception-path guarantee §3.4 exists for: if the callback
--- throws partway through, the resource is still closed.
 prop_withLoadedBpfObject_closesOnException :: Property
 prop_withLoadedBpfObject_closesOnException = property $ do
   evalIO (writeIORef globalOpenFlag False)
@@ -50,14 +53,6 @@ prop_withLoadedBpfObject_closesOnException = property $ do
     evalIO $
       try @SomeException $
         withLoadedBpfObject @TestHandle @() "irrelevant-path" $
-          -- Deliberately abandons 'obj' without consuming it, to
-          -- simulate an exception firing before any teardown call ever
-          -- runs -- this is exactly the scenario emergencyClose exists
-          -- for. Haskell's linear checker correctly refuses to
-          -- typecheck a callback that really doesn't consume its
-          -- argument; Unsafe.toLinear is a narrow, test-only assertion
-          -- that this abandonment is the intended scenario, not a
-          -- production-code pattern.
           Unsafe.toLinear (\_obj -> throwIO (userError "simulated failure mid-callback"))
   case result of
     Left _ -> success
@@ -65,30 +60,12 @@ prop_withLoadedBpfObject_closesOnException = property $ do
   stillOpen <- evalIO (readIORef globalOpenFlag)
   stillOpen === False
 
--- | The normal path is untouched: the callback's own 'teardown' is
--- what closes the resource -- 'withLoadedBpfObject''s exception handler
--- must not ALSO try to close it (which would be a double-close, and
--- with a real backend, a real double-free).
 prop_withLoadedBpfObject_normalPathTearsDownExactlyOnce :: Property
 prop_withLoadedBpfObject_normalPathTearsDownExactlyOnce = property $ do
   evalIO (writeIORef globalOpenFlag False)
   result <-
     evalIO $
       withLoadedBpfObject @TestHandle @() "irrelevant-path" $
-        -- Same documented inference gap as elsewhere in this project:
-        -- GHC doesn't reliably infer this lambda's own parameter as %1
-        -- when it's passed as an argument here, even though the body
-        -- genuinely does consume 'obj' exactly once via 'teardown'.
-        -- Unlike the exception-test callback above, this isn't
-        -- asserting anything false -- it's working around inference,
-        -- not bypassing real consumption.
-        --
-        -- Note the two-step structure: withLoadedBpfObject's callback
-        -- contract is `IO (Ur a)` directly -- Linear.withLinearIO is
-        -- used here just to run 'teardown' down to a plain `IO ()`,
-        -- not to produce the callback's own final Ur-wrapped result
-        -- (withLinearIO already strips one Ur layer as its own job;
-        -- routing the whole callback through it double-unwraps).
         Unsafe.toLinear
           ( \obj -> do
               Linear.withLinearIO
@@ -104,11 +81,137 @@ prop_withLoadedBpfObject_normalPathTearsDownExactlyOnce = property $ do
   stillOpen <- evalIO (readIORef globalOpenFlag)
   stillOpen === False
 
+--------------------------------------------------------------------------------
+-- withAttachedBpfObject tests
+--------------------------------------------------------------------------------
+
+data TestObjHandle = TestObjHandle
+data TestLinkHandle = TestLinkHandle
+
+{-# NOINLINE globalObjOpenFlag #-}
+globalObjOpenFlag :: IORef Bool
+globalObjOpenFlag = unsafePerformIO (newIORef False)
+
+{-# NOINLINE globalLinkOpenFlag #-}
+globalLinkOpenFlag :: IORef Bool
+globalLinkOpenFlag = unsafePerformIO (newIORef False)
+
+-- | Toggled per-property to exercise the "attach fails normally, no
+-- exception at all" path -- the exact scenario the attachObject leak
+-- fix was for.
+{-# NOINLINE globalAttachShouldFail #-}
+globalAttachShouldFail :: IORef Bool
+globalAttachShouldFail = unsafePerformIO (newIORef False)
+
+instance Consumable TestObjHandle where
+  consume = Unsafe.toLinear (\TestObjHandle -> ())
+
+instance Dupable TestObjHandle where
+  dup2 = Unsafe.toLinear (\TestObjHandle -> (TestObjHandle, TestObjHandle))
+
+instance Consumable TestLinkHandle where
+  consume = Unsafe.toLinear (\TestLinkHandle -> ())
+
+instance Dupable TestLinkHandle where
+  dup2 = Unsafe.toLinear (\TestLinkHandle -> (TestLinkHandle, TestLinkHandle))
+
+instance ObjectLifecycle TestObjHandle where
+  rawOpen _path = Linear.fromSystemIO (do
+    writeIORef globalObjOpenFlag True
+    pure (Right TestObjHandle))
+  rawLoad h = Control.pure (Right h)
+  rawClose h = consume h `lseq` Linear.fromSystemIO (writeIORef globalObjOpenFlag False)
+
+instance AttachDetach TestObjHandle TestLinkHandle where
+  rawAttach = Unsafe.toLinear (\h -> Linear.fromSystemIO (do
+    shouldFail <- readIORef globalAttachShouldFail
+    if shouldFail
+      then pure (Left (h, MockFailure "simulated attach failure"))
+      else do
+        writeIORef globalLinkOpenFlag True
+        pure (Right (h, TestLinkHandle))))
+  rawDetach link = consume link `lseq` Linear.fromSystemIO (writeIORef globalLinkOpenFlag False)
+
+resetFlags :: IO ()
+resetFlags = do
+  writeIORef globalObjOpenFlag False
+  writeIORef globalLinkOpenFlag False
+  writeIORef globalAttachShouldFail False
+
+-- | Exception fires after a real attach succeeded -- both the link and
+-- the object must be cleaned up.
+prop_withAttachedBpfObject_closesOnExceptionDuringCallback :: Property
+prop_withAttachedBpfObject_closesOnExceptionDuringCallback = property $ do
+  evalIO resetFlags
+  result <-
+    evalIO $
+      try @SomeException $
+        withAttachedBpfObject @TestObjHandle @TestLinkHandle "irrelevant-path" $
+          Unsafe.toLinear (\_obj -> throwIO (userError "simulated failure mid-callback"))
+  case result of
+    Left _ -> success
+    Right _ -> annotate "expected the simulated exception to propagate" >> failure
+  objStillOpen <- evalIO (readIORef globalObjOpenFlag)
+  linkStillOpen <- evalIO (readIORef globalLinkOpenFlag)
+  objStillOpen === False
+  linkStillOpen === False
+
+-- | Normal path: the callback's own teardown does the work, no
+-- double-close from withAttachedBpfObject's own exception handler.
+prop_withAttachedBpfObject_normalPathTearsDownExactlyOnce :: Property
+prop_withAttachedBpfObject_normalPathTearsDownExactlyOnce = property $ do
+  evalIO resetFlags
+  result <-
+    evalIO $
+      withAttachedBpfObject @TestObjHandle @TestLinkHandle "irrelevant-path" $
+        Unsafe.toLinear
+          ( \obj -> do
+              Linear.withLinearIO
+                ( Control.do
+                    teardown obj
+                    Control.pure (Ur ())
+                )
+              pure (Ur ())
+          )
+  case result of
+    Left err -> annotateShow err >> failure
+    Right () -> success
+  objStillOpen <- evalIO (readIORef globalObjOpenFlag)
+  linkStillOpen <- evalIO (readIORef globalLinkOpenFlag)
+  objStillOpen === False
+  linkStillOpen === False
+
+-- | Attach fails normally (no exception at all, just a genuine Left) --
+-- the exact scenario the attachObject leak fix exists for. The object
+-- must still end up closed, and the callback must never run.
+prop_withAttachedBpfObject_attachFailureClosesObjectNoException :: Property
+prop_withAttachedBpfObject_attachFailureClosesObjectNoException = property $ do
+  evalIO resetFlags
+  evalIO (writeIORef globalAttachShouldFail True)
+  result <-
+    evalIO $
+      withAttachedBpfObject @TestObjHandle @TestLinkHandle "irrelevant-path" $
+        Unsafe.toLinear (\_obj -> pure (Ur ()) :: IO (Ur ()))
+  case result of
+    Left _ -> success
+    Right _ -> annotate "expected the simulated attach failure to propagate as Left" >> failure
+  objStillOpen <- evalIO (readIORef globalObjOpenFlag)
+  objStillOpen === False
+
 main :: IO ()
 main =
   defaultMain $
     testGroup
-      "emergencyClose (withLoadedBpfObject)"
-      [ testProperty "closes the resource if the callback throws" prop_withLoadedBpfObject_closesOnException
-      , testProperty "normal path tears down exactly once, no double-close" prop_withLoadedBpfObject_normalPathTearsDownExactlyOnce
+      "emergencyClose"
+      [ testGroup
+          "withLoadedBpfObject"
+          [ testProperty "closes the resource if the callback throws" prop_withLoadedBpfObject_closesOnException
+          , testProperty "normal path tears down exactly once, no double-close" prop_withLoadedBpfObject_normalPathTearsDownExactlyOnce
+          ]
+      , testGroup
+          "withAttachedBpfObject"
+          [ testProperty "closes link and object if the callback throws" prop_withAttachedBpfObject_closesOnExceptionDuringCallback
+          , testProperty "normal path tears down exactly once, no double-close" prop_withAttachedBpfObject_normalPathTearsDownExactlyOnce
+          , testProperty "attach failure (no exception) still closes the object" prop_withAttachedBpfObject_attachFailureClosesObjectNoException
+          ]
       ]

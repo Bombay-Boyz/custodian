@@ -18,6 +18,7 @@ module Custodian
   , attachObject
   , Teardownable (..)
   , withLoadedBpfObject
+  , withAttachedBpfObject
   ) where
 
 import Prelude.Linear hiding (IO)
@@ -225,3 +226,99 @@ withLoadedBpfObject path callback = do
         restore (callback calleeObj)
           `Exception.onException` runLinearUnit (rawClose capturedRes)
       pure (Right result))
+
+-- | Split a captured object resource and link resource off an attached
+-- object via 'dup2', for the same reason 'splitLoaded' does: a copy of
+-- each must be closed over by an exception handler *before* the
+-- (still-intact) object is handed to a genuinely opaque callback.
+splitAttached
+  :: (Dupable objRes, Dupable linkRes)
+  => BpfObject objRes linkRes 'Attached %1
+  -> (objRes, linkRes, BpfObject objRes linkRes 'Attached)
+splitAttached = Unsafe.toLinear $ \obj -> case obj of
+  BpfObjectAttached h link -> case dup2 h of
+    (h1, h2) -> case dup2 link of
+      (link1, link2) -> (h1, link1, BpfObjectAttached h2 link2)
+
+-- | Run a callback against a fully attached BPF object, guaranteeing
+-- the link is destroyed and the object closed even if the callback
+-- throws.
+--
+-- Structured in three exception-guarded stages, each capturing exactly
+-- what it needs to clean up if interrupted at that point:
+--
+--   1. open + load (same as 'withLoadedBpfObject')
+--   2. attach itself -- 'attachObject' never throws synchronously (it
+--      only ever returns @Left@), but an async exception could still
+--      land here, so a duplicated object resource is captured first.
+--      On a normal (non-exceptional) attach failure, the still-valid
+--      'Loaded' object 'attachObject' now hands back (see the leak fix
+--      in 'attachObject''s own history) is torn down through the
+--      ordinary linear-typed API -- no escape hatch needed for that
+--      path at all.
+--   3. the callback itself -- both the object and link resources are
+--      captured before it runs, and both are cleaned up (link first,
+--      then object, matching 'Teardownable''s 'Attached instance) if
+--      it throws.
+--
+-- Does not attempt kernel-side "is this still attached" discovery, for
+-- the same reason 'withLoadedBpfObject' doesn't: no such query exists
+-- in real @libbpf@ (verified against the installed header, not
+-- assumed). Every stage here tracks its own progress instead of asking
+-- the kernel after the fact, which is why no such discovery is needed
+-- even though this function (unlike 'withLoadedBpfObject') does let the
+-- callback receive a genuinely attached object.
+withAttachedBpfObject
+  :: forall objRes linkRes a
+   . (ObjectLifecycle objRes, AttachDetach objRes linkRes, Dupable objRes, Dupable linkRes)
+  => FilePath
+  -> (BpfObject objRes linkRes 'Attached %1 -> IO (Ur a))
+  -> IO (Either CustodianError a)
+withAttachedBpfObject path callback = do
+  step1 <-
+    Linear.withLinearIO (Control.do
+      r1 <- (openObject path :: Linear.IO (Either CustodianError (BpfObject objRes linkRes 'Opened)))
+      either
+        (Unsafe.toLinear (\e -> Control.pure (Ur (Left e))))
+        ( \obj1 -> Control.do
+            r2 <- loadObject obj1
+            either
+              (Unsafe.toLinear (\e -> Control.pure (Ur (Left e))))
+              (Unsafe.toLinear (\obj2 -> Control.pure (Ur (Right obj2))))
+              r2
+        )
+        r1)
+  case step1 of
+    Left err -> pure (Left err)
+    Right loadedObj -> Exception.mask (\restore -> do
+      let (capturedForAttachStep, loadedForAttach) = splitLoaded loadedObj
+      attachResult <-
+        restore
+          ( Linear.withLinearIO (Control.do
+              r3 <- attachObject loadedForAttach
+              either
+                ( Unsafe.toLinear
+                    ( \pair -> case pair of
+                        (e, obj2') -> Control.do
+                          teardown obj2'
+                          Control.pure (Ur (Left e))
+                    )
+                )
+                (Unsafe.toLinear (\attachedObj -> Control.pure (Ur (Right attachedObj))))
+                r3
+            )
+          )
+          `Exception.onException` runLinearUnit (rawClose capturedForAttachStep)
+      case attachResult of
+        Left err -> pure (Left err)
+        Right attachedObj -> do
+          let (capturedObjRes, capturedLinkRes, calleeObj) = splitAttached attachedObj
+          Ur result <-
+            restore (callback calleeObj)
+              `Exception.onException`
+                runLinearUnit
+                  ( Control.do
+                      rawDetach capturedLinkRes
+                      rawClose capturedObjRes
+                  )
+          pure (Right result))
