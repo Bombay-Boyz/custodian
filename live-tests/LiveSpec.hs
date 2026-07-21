@@ -31,6 +31,15 @@ fixtureObject = "live-tests/fixtures/hello.bpf.o"
 -- of the C-side validation harness the implementation spec calls for
 -- (a real, independent compilation step the Haskell side must correctly
 -- load), not a substitute for a fuller one.
+--
+-- The explicit -I/usr/include/x86_64-linux-gnu is required: clang's
+-- -target bpf cross-compilation doesn't pick up the normal
+-- architecture-specific include path the way a native-target build
+-- would, so <linux/bpf.h> -> <linux/types.h> -> <asm/types.h> fails to
+-- resolve without it. This bit locally (some distros have a top-level
+-- /usr/include/asm symlink papering over it) but failed exactly this
+-- way on GitHub's hosted Ubuntu runner -- verified by actually running
+-- CI, not assumed upfront.
 compileFixture :: IO ()
 compileFixture =
   callProcess
@@ -40,6 +49,7 @@ compileFixture =
     , "-target"
     , "bpf"
     , "-D__TARGET_ARCH_x86"
+    , "-I/usr/include/x86_64-linux-gnu"
     , "-c"
     , fixtureSource
     , "-o"
