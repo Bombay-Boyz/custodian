@@ -6,6 +6,7 @@ import Prelude hiding (either)
 import qualified Control.Functor.Linear as Control
 import qualified System.IO.Linear as Linear
 import Prelude.Linear (Ur (..), either, move)
+import qualified Unsafe.Linear as Unsafe
 import Foreign.Ptr (Ptr)
 import Custodian (BpfObject, LifecycleState (..), openObject, loadObject, attachObject, teardown)
 import Custodian.Errors (CustodianError)
@@ -57,7 +58,16 @@ runLifecycle path = Control.do
           ( \obj2 -> Control.do
               r3 <- attachObject obj2
               either
-                (\e -> Control.pure (Left e))
+                -- attachObject now hands back the still-valid Loaded
+                -- object on failure -- must be torn down here, or a
+                -- real kernel bpf_object is leaked.
+                ( Unsafe.toLinear
+                    ( \pair -> case pair of
+                        (e, obj2') -> Control.do
+                          teardown obj2'
+                          Control.pure (Left e)
+                    )
+                )
                 ( \obj3 -> Control.do
                     teardown obj3
                     Control.pure (Right ())

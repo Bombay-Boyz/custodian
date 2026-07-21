@@ -84,16 +84,23 @@ instance AttachDetach (Ptr CBpfObject) (Ptr CBpfLink) where
   -- Scope note (matches Custodian.Raw): always fetches the /first/
   -- program via @bpf_object__next_program(obj, NULL)@ -- single-program
   -- objects only, per Phase 2's first-slice scope.
+  --
+  -- Returns 'objPtr' alongside the error on EVERY failure path, not
+  -- just on success: neither 'bpf_object__next_program' nor
+  -- 'bpf_program__attach' failing invalidates the underlying object --
+  -- it stays open and must still be closed. An earlier version of this
+  -- function discarded 'objPtr' on failure, silently leaking the real
+  -- kernel object every time attach failed.
   rawAttach = Unsafe.toLinear $ \objPtr ->
     Linear.fromSystemIO $
       c_bpf_object__next_program objPtr nullPtr P.>>= \progPtr ->
         if progPtr P.== nullPtr
-          then P.pure (Left (LibbpfFailure "bpf_object__next_program: no program found in object"))
+          then P.pure (Left (objPtr, LibbpfFailure "bpf_object__next_program: no program found in object"))
           else
             c_bpf_program__attach progPtr P.>>= \linkPtr ->
               P.pure $
                 if linkPtr P.== nullPtr
-                  then Left (LibbpfFailure "bpf_program__attach failed")
+                  then Left (objPtr, LibbpfFailure "bpf_program__attach failed")
                   else Right (objPtr, linkPtr)
 
   rawDetach = Unsafe.toLinear $ \linkPtr ->

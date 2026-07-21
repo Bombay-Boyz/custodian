@@ -58,12 +58,15 @@ class ObjectLifecycle objRes where
 
 -- | Capability: attach a loaded object's program(s), producing a link,
 -- and detach (destroy) that link. 'rawAttach' returns the object
--- resource back alongside the new link resource -- attaching does not
--- consume or invalidate the object itself (the real @bpf_object__load@d
--- object stays alive while attached; only the link is a separate,
--- independently-destroyable resource).
+-- resource back in BOTH branches -- attaching does not consume or
+-- invalidate the object itself (the real @bpf_object__load@d object
+-- stays alive whether or not attach succeeds; only the link is a
+-- separate, independently-destroyable resource). Returning 'objRes'
+-- even on failure matters: without it, a failed attach would silently
+-- leak the underlying object resource with no way for the caller to
+-- close it -- exactly the bug this signature was changed to rule out.
 class AttachDetach objRes linkRes | linkRes -> objRes where
-  rawAttach :: objRes %1 -> Linear.IO (Either CustodianError (objRes, linkRes))
+  rawAttach :: objRes %1 -> Linear.IO (Either (objRes, CustodianError) (objRes, linkRes))
   rawDetach :: linkRes %1 -> Linear.IO ()
 
 -- | Open a BPF object file.
@@ -107,16 +110,23 @@ loadObject obj = case obj of
 -- Pre-condition:  the 'BpfObject' must be in the 'Loaded' state.
 -- Post-condition: on success, the returned 'BpfObject' is in the
 --                 'Attached' state, carrying both the original object
---                 resource and the newly-produced link resource.
+--                 resource and the newly-produced link resource. On
+--                 failure, the caller gets back a still-valid 'Loaded'
+--                 object (not just a bare error) -- attach failing does
+--                 not invalidate the underlying object, so the caller
+--                 can (and must) still 'teardown' it through the normal
+--                 linear-typed API. Returning only the error here, as
+--                 an earlier version of this function did, silently
+--                 leaked the object resource on every attach failure.
 attachObject
   :: (ObjectLifecycle objRes, AttachDetach objRes linkRes)
   => BpfObject objRes linkRes 'Loaded %1
-  -> Linear.IO (Either CustodianError (BpfObject objRes linkRes 'Attached))
+  -> Linear.IO (Either (CustodianError, BpfObject objRes linkRes 'Loaded) (BpfObject objRes linkRes 'Attached))
 attachObject obj = case obj of
   BpfObjectLoaded h -> Control.do
     r <- rawAttach h
     either
-      (\e -> Control.pure (Left e))
+      (Unsafe.toLinear (\pair -> case pair of (h', e) -> Control.pure (Left (e, BpfObjectLoaded h'))))
       (Unsafe.toLinear (\pair -> case pair of (h', link) -> Control.pure (Right (BpfObjectAttached h' link))))
       r
 
