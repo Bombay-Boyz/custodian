@@ -44,6 +44,14 @@ jobs:
       - name: cabal test live-tests, unprivileged (expect graceful skip)
         run: cabal test live-tests
 
+      - name: Diagnose .hie file presence (debugging weeder's "no HIE files" failure)
+        run: |
+          echo "Working directory: $(pwd)"
+          echo "--- Searching for .hie files under dist-newstyle ---"
+          find dist-newstyle -name '*.hie' 2>&1 | head -50
+          echo "--- Count ---"
+          find dist-newstyle -name '*.hie' 2>&1 | wc -l
+
       - name: weeder (dead-code check)
         run: |
           cabal install weeder --overwrite-policy=always
