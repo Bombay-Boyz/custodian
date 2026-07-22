@@ -10,12 +10,14 @@ module Custodian.Mock
   , mockTeardown
   ) where
 
-import Prelude.Linear
+import Prelude.Linear hiding (IO)
+import Prelude (pure)
 import qualified Control.Functor.Linear as Control
 import qualified System.IO.Linear as Linear
 import qualified Unsafe.Linear as Unsafe
 import Custodian (ObjectLifecycle (..), AttachDetach (..))
 import Custodian.Errors (CustodianError (..))
+import Custodian.Map (MapLookup (..))
 
 -- | Opaque stand-in for a live kernel-side @bpf_object@ pointer. Carries
 -- just an identifying tag (Phase 1 mock; no real kernel resource exists).
@@ -56,3 +58,9 @@ instance AttachDetach MockHandle MockHandle where
   rawAttach h = case dup2 h of
     (hObj, hLink) -> Control.pure (Right (hObj, hLink))
   rawDetach = mockTeardown
+
+-- | The mock backend has no real maps at all (Phase 4 v1 scope) --
+-- this instance exists so 'withMap'/the scope-escape negative test can
+-- type-check against Mock, not to simulate real map behaviour.
+instance MapLookup MockHandle where
+  rawFindMapFd _h _name = pure (Left (MockFailure "Custodian.Mock has no real maps"))

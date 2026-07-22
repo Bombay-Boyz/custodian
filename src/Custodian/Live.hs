@@ -38,8 +38,10 @@ import qualified System.IO.Linear as Linear
 import qualified Unsafe.Linear as Unsafe
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.C.String (withCString)
+import System.Posix.Types (Fd (..))
 import Custodian (ObjectLifecycle (..), AttachDetach (..))
 import Custodian.Errors (CustodianError (..))
+import Custodian.Map (MapLookup (..))
 import Custodian.Raw
   ( CBpfObject
   , CBpfLink
@@ -49,6 +51,8 @@ import Custodian.Raw
   , c_bpf_object__next_program
   , c_bpf_program__attach
   , c_bpf_link__destroy
+  , c_bpf_object__find_map_by_name
+  , c_bpf_map__fd
   )
 
 instance ObjectLifecycle (Ptr CBpfObject) where
@@ -106,3 +110,16 @@ instance AttachDetach (Ptr CBpfObject) (Ptr CBpfLink) where
   rawDetach = Unsafe.toLinear $ \linkPtr ->
     Linear.fromSystemIO $
       c_bpf_link__destroy linkPtr P.>>= \_rc -> P.pure ()
+
+instance MapLookup (Ptr CBpfObject) where
+  rawFindMapFd objPtr name =
+    withCString name $ \cname ->
+      c_bpf_object__find_map_by_name objPtr cname P.>>= \mapPtr ->
+        if mapPtr P.== nullPtr
+          then P.pure (Left (LibbpfFailure (name P.++ ": bpf_object__find_map_by_name returned NULL")))
+          else
+            c_bpf_map__fd mapPtr P.>>= \fd ->
+              P.pure $
+                if fd P.< 0
+                  then Left (LibbpfFailure "bpf_map__fd returned a negative fd")
+                  else Right (Fd fd)

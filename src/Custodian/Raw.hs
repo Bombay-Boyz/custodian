@@ -50,9 +50,12 @@ module Custodian.Raw
   , c_bpf_link__destroy
 
     -- * Maps
+  , c_bpf_object__find_map_by_name
   , c_bpf_map__fd
   , c_bpf_map_lookup_elem
   , c_bpf_map_update_elem
+  , c_bpf_map_delete_elem
+  , c_bpf_map_get_next_key
   ) where
 
 import Prelude
@@ -119,6 +122,10 @@ foreign import capi unsafe "bpf/libbpf.h bpf_program__attach"
 foreign import capi unsafe "bpf/libbpf.h bpf_link__destroy"
   c_bpf_link__destroy :: Ptr CBpfLink -> IO CInt
 
+-- | @struct bpf_map *bpf_object__find_map_by_name(const struct bpf_object *obj, const char *name);@
+foreign import capi unsafe "bpf/libbpf.h bpf_object__find_map_by_name"
+  c_bpf_object__find_map_by_name :: Ptr CBpfObject -> CString -> IO (Ptr CBpfMap)
+
 -- | @int bpf_map__fd(const struct bpf_map *map);@
 foreign import capi unsafe "bpf/libbpf.h bpf_map__fd"
   c_bpf_map__fd :: Ptr CBpfMap -> IO CInt
@@ -140,3 +147,17 @@ foreign import capi unsafe "bpf/bpf.h bpf_map_lookup_elem"
 -- Declared in @bpf\/bpf.h@, not @libbpf.h@ -- see note above.
 foreign import capi unsafe "bpf/bpf.h bpf_map_update_elem"
   c_bpf_map_update_elem :: CInt -> Ptr () -> Ptr () -> Word64 -> IO CInt
+
+-- | @int bpf_map_delete_elem(int fd, const void *key);@
+foreign import capi unsafe "bpf/bpf.h bpf_map_delete_elem"
+  c_bpf_map_delete_elem :: CInt -> Ptr () -> IO CInt
+
+-- | @int bpf_map_get_next_key(int fd, const void *key, void *next_key);@
+--
+-- @key@ may be a null 'Ptr' to fetch the /first/ key (per libbpf's own
+-- convention, mirroring @bpf_object__next_program@'s null-for-first
+-- idiom used elsewhere in this module) -- iteration support (Phase 4)
+-- calls this repeatedly, feeding each returned key back in as the next
+-- call's @key@, until it returns non-zero (no more keys).
+foreign import capi unsafe "bpf/bpf.h bpf_map_get_next_key"
+  c_bpf_map_get_next_key :: CInt -> Ptr () -> Ptr () -> IO CInt
