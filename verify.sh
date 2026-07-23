@@ -21,7 +21,7 @@ FILES=$(find src test -name '*.hs')
 
 echo "############ 4. HLint (incl. no-partial-functions rule) ############"
 if command -v hlint >/dev/null 2>&1; then
-  hlint --hint=.hlint.yaml $FILES || rc=1
+  hlint --hint=hlint.yaml $FILES || rc=1
 else
   echo "  hlint not on PATH -- runs in CI (.github/workflows/ci.yml)"
 fi
