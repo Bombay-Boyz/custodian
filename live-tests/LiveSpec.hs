@@ -1,5 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE QualifiedDo #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Main (main) where
 
 import Prelude hiding (either)
@@ -8,8 +10,10 @@ import qualified System.IO.Linear as Linear
 import Prelude.Linear (Ur (..), either, move)
 import qualified Unsafe.Linear as Unsafe
 import Foreign.Ptr (Ptr)
-import Custodian (BpfObject, LifecycleState (..), openObject, loadObject, attachObject, teardown)
-import Custodian.Errors (CustodianError)
+import Data.Word (Word32, Word64)
+import Custodian (BpfObject, LifecycleState (..), openObject, loadObject, attachObject, teardown, withLoadedBpfObject, borrowObjRes)
+import Custodian.Errors (CustodianError (..))
+import Custodian.Map (LiveMap, MapType (..), withMap, readMap, writeMap, deleteMap)
 import Custodian.Raw (CBpfObject, CBpfLink)
 import Custodian.Live ()
 import System.Posix.User (getEffectiveUserID)
@@ -88,6 +92,76 @@ runLifecycle path = Control.do
     )
     r1
 
+-- | Named helper with an explicit rank-2 signature -- this is what
+-- pins the map-type witness ('HashMap) and key\/value types
+-- (Word32\/Word64) via ordinary type matching against 'withMap''s
+-- expected callback type, rather than relying on 'TypeApplications'
+-- argument-order guesswork.
+counterMapTest :: forall br. LiveMap br 'HashMap Word32 Word64 -> IO (Either CustodianError Word64)
+counterMapTest m = do
+  wr <- writeMap m 42 100
+  case wr of
+    Left err -> pure (Left err)
+    Right () -> do
+      rr <- readMap m 42
+      case rr of
+        Left err -> pure (Left err)
+        Right Nothing -> pure (Left (LibbpfFailure "key 42 not found immediately after writeMap"))
+        Right (Just v) -> do
+          dr <- deleteMap m 42
+          case dr of
+            Left err -> pure (Left err)
+            Right () -> do
+              afterDelete <- readMap m 42
+              pure $ case afterDelete of
+                Left err -> Left err
+                Right Nothing -> Right v -- confirms deleteMap genuinely removed the key
+                Right (Just _) -> Left (LibbpfFailure "key 42 still present after deleteMap")
+
+-- | Real map write/read/delete round-trip against a genuine kernel-
+-- created BPF_MAP_TYPE_HASH map (declared in the fixture .bpf.c) --
+-- not just type-checking withMap/readMap/writeMap/deleteMap, actually
+-- exercising them.
+testMapRoundTrip :: IO ()
+testMapRoundTrip = do
+  outer <-
+    withLoadedBpfObject fixtureObject $
+      Unsafe.toLinear
+        ( \(obj :: LiveBpfObject 'Loaded) -> do
+            let (objRes, obj') = borrowObjRes obj
+            mapResult <- withMap objRes "counters" counterMapTest
+            Linear.withLinearIO
+              ( Control.do
+                  teardown obj'
+                  Control.pure (Ur ())
+              )
+            pure (Ur mapResult)
+        )
+  -- Three nested Eithers here, not two: withLoadedBpfObject's own
+  -- (open/load failure), withMap's own (map-not-found), and
+  -- counterMapTest's own (the round-trip's internal failure) --
+  -- missing this third layer the first time gave a confusing
+  -- "No instance for Num (Either CustodianError Word64)" error, not an
+  -- obviously-about-nesting one.
+  case outer of
+    Left err -> do
+      putStrLn ("FAILED (withLoadedBpfObject): " ++ show err)
+      exitFailure
+    Right withMapResult -> case withMapResult of
+      Left err -> do
+        putStrLn ("FAILED (withMap): " ++ show err)
+        exitFailure
+      Right innerResult -> case innerResult of
+        Left err -> do
+          putStrLn ("FAILED (map round-trip): " ++ show err)
+          exitFailure
+        Right v ->
+          if v == 100
+            then putStrLn "PASSED: map write/read/delete round-trip succeeded against a real BPF map"
+            else do
+              putStrLn ("FAILED: expected value 100 after write, got " ++ show v)
+              exitFailure
+
 main :: IO ()
 main = do
   uid <- getEffectiveUserID
@@ -112,3 +186,4 @@ main = do
           putStrLn ("FAILED: " ++ show err)
           exitFailure
         Right () -> putStrLn "PASSED: full open->load->attach->teardown succeeded against a real BPF program"
+      testMapRoundTrip

@@ -55,6 +55,24 @@ import Custodian.Raw
   , c_bpf_map__fd
   )
 
+-- | 'Ptr' values are ordinary, freely-copyable machine addresses at the
+-- Haskell level -- duplicating or discarding the pointer VALUE never
+-- touches the underlying kernel resource it merely names, so these are
+-- safe in the same sense 'MockHandle''s instances are. Needed for
+-- 'Custodian.borrowObjRes'\/'Custodian.withLoadedBpfObject'\/
+-- 'Custodian.withAttachedBpfObject' to work against this backend.
+instance Consumable (Ptr CBpfObject) where
+  consume = Unsafe.toLinear (\_ -> ())
+
+instance Dupable (Ptr CBpfObject) where
+  dup2 = Unsafe.toLinear (\p -> (p, p))
+
+instance Consumable (Ptr CBpfLink) where
+  consume = Unsafe.toLinear (\_ -> ())
+
+instance Dupable (Ptr CBpfLink) where
+  dup2 = Unsafe.toLinear (\p -> (p, p))
+
 instance ObjectLifecycle (Ptr CBpfObject) where
   rawOpen path = Linear.fromSystemIO $
     withCString path $ \cpath ->

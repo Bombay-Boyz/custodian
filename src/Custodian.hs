@@ -19,6 +19,7 @@ module Custodian
   , Teardownable (..)
   , withLoadedBpfObject
   , withAttachedBpfObject
+  , HasObjRes (..)
   ) where
 
 import Prelude.Linear hiding (IO)
@@ -239,6 +240,29 @@ splitAttached = Unsafe.toLinear $ \obj -> case obj of
   BpfObjectAttached h link -> case dup2 h of
     (h1, h2) -> case dup2 link of
       (link1, link2) -> (h1, link1, BpfObjectAttached h2 link2)
+
+-- | Borrow a plain copy of a 'BpfObject''s underlying object resource
+-- without consuming the whole linear value -- for interop with
+-- non-linear APIs that need a plain resource handle, not a linear one
+-- (e.g. "Custodian.Map"'s @withMap@, which needs an @objRes@ to look up
+-- a map by name). Works for both 'Loaded' and 'Attached' objects: a
+-- map is valid once the object is loaded, whether or not attach has
+-- happened yet.
+--
+-- Same 'Dupable'\/'Unsafe.toLinear' technique 'splitLoaded'\/
+-- 'splitAttached' already use internally for exception-safety capture
+-- -- this class just makes that technique available outside this
+-- module too, generalized over the lifecycle state.
+class HasObjRes objRes linkRes (s :: LifecycleState) where
+  borrowObjRes :: BpfObject objRes linkRes s %1 -> (objRes, BpfObject objRes linkRes s)
+
+instance Dupable objRes => HasObjRes objRes linkRes 'Loaded where
+  borrowObjRes = splitLoaded
+
+instance Dupable objRes => HasObjRes objRes linkRes 'Attached where
+  borrowObjRes = Unsafe.toLinear $ \obj -> case obj of
+    BpfObjectAttached h link -> case dup2 h of
+      (h1, h2) -> (h1, BpfObjectAttached h2 link)
 
 -- | Run a callback against a fully attached BPF object, guaranteeing
 -- the link is destroyed and the object closed even if the callback
