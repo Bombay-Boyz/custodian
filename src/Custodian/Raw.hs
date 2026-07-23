@@ -58,11 +58,11 @@ module Custodian.Raw
   , c_bpf_map_get_next_key
   ) where
 
-import Prelude
 import Data.Word (Word64)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt (..))
 import Foreign.Ptr (Ptr)
+import Prelude
 
 -- | @libbpf@ version this module's declarations were transcribed
 -- against (from @bpf\/libbpf_version.h@: @LIBBPF_MAJOR_VERSION 1@,
@@ -107,7 +107,8 @@ foreign import capi unsafe "bpf/libbpf.h bpf_object__close"
 -- this function) -- this is how the single-program-object scope note
 -- above is implemented: always call with a null second argument.
 foreign import capi unsafe "bpf/libbpf.h bpf_object__next_program"
-  c_bpf_object__next_program :: Ptr CBpfObject -> Ptr CBpfProgram -> IO (Ptr CBpfProgram)
+  c_bpf_object__next_program
+    :: Ptr CBpfObject -> Ptr CBpfProgram -> IO (Ptr CBpfProgram)
 
 -- | @struct bpf_link *bpf_program__attach(const struct bpf_program *prog);@
 --

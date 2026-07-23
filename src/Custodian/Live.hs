@@ -1,8 +1,9 @@
-{-# LANGUAGE LinearTypes #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE QualifiedDo #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LinearTypes #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE QualifiedDo #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | The real backend: 'ObjectLifecycle'/'AttachDetach' instances wired
 -- against actual @libbpf@ calls ('Custodian.Raw'). This is the second
@@ -29,31 +30,30 @@
 -- avoids the warning only because it happens to define its own
 -- 'MockHandle' locally). Suppressed here, scoped to this file only, not
 -- project-wide.
-{-# OPTIONS_GHC -Wno-orphans #-}
 module Custodian.Live () where
 
-import Prelude.Linear
-import qualified Prelude as P
-import qualified System.IO.Linear as Linear
-import qualified Unsafe.Linear as Unsafe
-import Foreign.Ptr (Ptr, nullPtr)
-import Foreign.C.String (withCString)
-import System.Posix.Types (Fd (..))
-import Custodian (ObjectLifecycle (..), AttachDetach (..))
+import Custodian (AttachDetach (..), ObjectLifecycle (..))
 import Custodian.Errors (CustodianError (..))
 import Custodian.Map (MapLookup (..))
 import Custodian.Raw
-  ( CBpfObject
-  , CBpfLink
-  , c_bpf_object__open
-  , c_bpf_object__load
-  , c_bpf_object__close
-  , c_bpf_object__next_program
-  , c_bpf_program__attach
+  ( CBpfLink
+  , CBpfObject
   , c_bpf_link__destroy
-  , c_bpf_object__find_map_by_name
   , c_bpf_map__fd
+  , c_bpf_object__close
+  , c_bpf_object__find_map_by_name
+  , c_bpf_object__load
+  , c_bpf_object__next_program
+  , c_bpf_object__open
+  , c_bpf_program__attach
   )
+import Foreign.C.String (withCString)
+import Foreign.Ptr (Ptr, nullPtr)
+import Prelude.Linear
+import qualified System.IO.Linear as Linear
+import System.Posix.Types (Fd (..))
+import qualified Unsafe.Linear as Unsafe
+import qualified Prelude as P
 
 -- | 'Ptr' values are ordinary, freely-copyable machine addresses at the
 -- Haskell level -- duplicating or discarding the pointer VALUE never
@@ -74,11 +74,12 @@ instance Dupable (Ptr CBpfLink) where
   dup2 = Unsafe.toLinear (\p -> (p, p))
 
 instance ObjectLifecycle (Ptr CBpfObject) where
-  rawOpen path = Linear.fromSystemIO $
-    withCString path $ \cpath ->
+  rawOpen path = Linear.fromSystemIO
+    $ withCString path
+    $ \cpath ->
       c_bpf_object__open cpath P.>>= \ptr ->
-        P.pure $
-          if ptr P.== nullPtr
+        P.pure
+          $ if ptr P.== nullPtr
             then Left (LibbpfFailure (path P.++ ": bpf_object__open returned NULL"))
             else Right ptr
 
@@ -92,10 +93,11 @@ instance ObjectLifecycle (Ptr CBpfObject) where
   -- per the same documented-experimental limitation noted throughout
   -- "Custodian" and "Custodian.Mock".
   rawLoad = Unsafe.toLinear $ \ptr ->
-    Linear.fromSystemIO $
-      c_bpf_object__load ptr P.>>= \rc ->
-        P.pure $
-          if rc P.< 0
+    Linear.fromSystemIO
+      $ c_bpf_object__load ptr
+      P.>>= \rc ->
+        P.pure
+          $ if rc P.< 0
             then Left (LibbpfFailure ("bpf_object__load failed, rc=" P.++ P.show rc))
             else Right ptr
 
@@ -114,30 +116,38 @@ instance AttachDetach (Ptr CBpfObject) (Ptr CBpfLink) where
   -- function discarded 'objPtr' on failure, silently leaking the real
   -- kernel object every time attach failed.
   rawAttach = Unsafe.toLinear $ \objPtr ->
-    Linear.fromSystemIO $
-      c_bpf_object__next_program objPtr nullPtr P.>>= \progPtr ->
+    Linear.fromSystemIO
+      $ c_bpf_object__next_program objPtr nullPtr
+      P.>>= \progPtr ->
         if progPtr P.== nullPtr
-          then P.pure (Left (objPtr, LibbpfFailure "bpf_object__next_program: no program found in object"))
+          then
+            P.pure
+              ( Left
+                  (objPtr, LibbpfFailure "bpf_object__next_program: no program found in object")
+              )
           else
             c_bpf_program__attach progPtr P.>>= \linkPtr ->
-              P.pure $
-                if linkPtr P.== nullPtr
+              P.pure
+                $ if linkPtr P.== nullPtr
                   then Left (objPtr, LibbpfFailure "bpf_program__attach failed")
                   else Right (objPtr, linkPtr)
 
   rawDetach = Unsafe.toLinear $ \linkPtr ->
-    Linear.fromSystemIO $
-      c_bpf_link__destroy linkPtr P.>>= \_rc -> P.pure ()
+    Linear.fromSystemIO
+      $ c_bpf_link__destroy linkPtr
+      P.>>= \_rc -> P.pure ()
 
 instance MapLookup (Ptr CBpfObject) where
   rawFindMapFd objPtr name =
     withCString name $ \cname ->
       c_bpf_object__find_map_by_name objPtr cname P.>>= \mapPtr ->
         if mapPtr P.== nullPtr
-          then P.pure (Left (LibbpfFailure (name P.++ ": bpf_object__find_map_by_name returned NULL")))
+          then
+            P.pure
+              (Left (LibbpfFailure (name P.++ ": bpf_object__find_map_by_name returned NULL")))
           else
             c_bpf_map__fd mapPtr P.>>= \fd ->
-              P.pure $
-                if fd P.< 0
+              P.pure
+                $ if fd P.< 0
                   then Left (LibbpfFailure "bpf_map__fd returned a negative fd")
                   else Right (Fd fd)
