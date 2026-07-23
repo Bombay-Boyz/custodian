@@ -1,0 +1,41 @@
+cabal-version:      3.0
+name:               custodian-live
+version:            0.1.0.0
+synopsis:           Real libbpf backend, example, and live tests for custodian
+build-type:         Simple
+
+common warnings
+  ghc-options: -Wall -Werror
+
+library
+  import:           warnings
+  hs-source-dirs:   src
+  exposed-modules:  Custodian.Raw
+                  , Custodian.Raw.MapInfo
+                  , Custodian.Live
+  build-depends:    base
+                  , linear-base
+                  , custodian-verified
+  extra-libraries:  bpf
+  default-language: GHC2021
+
+executable custodian-syscall-counter
+  import:           warnings
+  hs-source-dirs:   examples
+  main-is:          SyscallCounter.hs
+  build-depends:    base
+                  , custodian-verified
+                  , custodian-live
+  default-language: GHC2021
+
+test-suite live-spec
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   live-tests
+  main-is:          LiveSpec.hs
+  build-depends:    base
+                  , directory
+                  , unix
+                  , custodian-verified
+                  , custodian-live
+  default-language: GHC2021

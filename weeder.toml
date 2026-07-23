@@ -1,2 +1,11 @@
-[weeder]
-roots = ["Main.main"]
+# Weeder: fail on unreachable exports/definitions. Roots are the public
+# library surface and the test/negative entry points, so anything not
+# reachable from them is flagged dead.
+roots =
+  [ "^Custodian\\.Errors\\..*"
+  , "^Custodian\\.Core\\..*"
+  , "^Custodian\\.Map\\..*"
+  , "^Custodian\\.Mock\\..*"
+  , "^Main\\.main$"
+  ]
+type-class-roots = true

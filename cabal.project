@@ -1,2 +1,4 @@
+-- One project, two packages: the pure/mock core (.) and the libbpf-linked
+-- live backend + example + live tests (live/).
 packages: .
-write-ghc-environment-files: always
+          live/

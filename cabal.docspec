@@ -1,0 +1,5 @@
+-- cabal-docspec configuration. The public Haddock uses lemma-style
+-- pre/post/invariant blocks (not runnable >>> examples), so docspec's job
+-- here is to verify any example it DOES find still evaluates, and to keep
+-- the gate wired for when runnable examples are added.
+tests: true

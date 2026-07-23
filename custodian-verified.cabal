@@ -1,0 +1,35 @@
+cabal-version:      3.0
+name:               custodian-verified
+version:            0.1.0.0
+synopsis:           Verified redesign of the custodian lifecycle/map safety fixes
+build-type:         Simple
+
+common warnings
+  ghc-options: -Wall -Werror
+
+library
+  import:           warnings
+  hs-source-dirs:   src
+  exposed-modules:  Custodian.Errors
+                  , Custodian.Core
+                  , Custodian.Map
+                  , Custodian.Mock
+  build-depends:    base
+                  , ghc-prim
+                  , linear-base
+                  , containers
+  default-language: GHC2021
+
+test-suite verified-test
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  build-depends:    base
+                  , linear-base
+                  , custodian-verified
+                  , hedgehog
+                  , tasty
+                  , tasty-hedgehog
+                  , containers
+  default-language: GHC2021
