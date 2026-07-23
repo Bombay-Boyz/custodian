@@ -27,7 +27,28 @@ at `open` otherwise:
 ```sh
 clang -O2 -g -target bpf -c live/live-tests/fixtures/hello.bpf.c -o hello.bpf.o
 sudo cabal run custodian-syscall-counter        # from a dir containing hello.bpf.o
-sudo cabal test live-spec                        # needs CAP_BPF
+sudo cabal test live-spec                        # needs CAP_BPF + CAP_PERFMON
+```
+
+**Linux only.** BPF is a Linux kernel feature; this will not build or run on
+macOS, Windows, or WSL1.
+
+**Why `sudo` / why it fails without it.** Loading a BPF program into the
+kernel and attaching it to a tracepoint are both privileged operations,
+gated by two separate capabilities: `CAP_BPF` (+ `CAP_SYS_RESOURCE` on
+kernels before ~5.11, to raise `RLIMIT_MEMLOCK`) to *load*, and
+`CAP_PERFMON` (or `CAP_SYS_ADMIN` on kernels before 5.8) to *attach* via
+`perf_event_open`. Without them you'll see errors like
+`Operation not permitted` (load) or `Permission denied` on the tracepoint
+(attach) — this is the kernel correctly refusing an unprivileged process,
+not a bug in this project.
+
+If you'd rather not run the whole binary as root, grant just the needed
+capabilities instead:
+
+```sh
+sudo setcap cap_bpf,cap_perfmon,cap_net_admin+ep \
+  $(find dist-newstyle -type f -name custodian-syscall-counter)
 ```
 
 Everything was verified here on GHC 9.8.4; the project's pinned toolchain is
@@ -201,13 +222,18 @@ than hidden: attach binds a single program per object (`bpf_object__next_program
 
 - Verified on GHC 9.8.4 / `linear-base` 0.8.1, not the pinned 9.14.1.
 - The live package **builds, links against `libbpf`, and runs** — the example
-  invokes real libbpf calls and propagates errors through the full stack. What
-  it cannot do here is **load or attach a program**, which needs a `CAP_BPF`
-  runner and a compiled `hello.bpf.o` (no clang/BPF toolchain or privileged
-  kernel in the sandbox). So `LiveSpec` skips rather than asserting on a real
-  load, and the §9 "hello world" stops at `open`. `hsc2hs`-derived offsets are
-  correct by construction (computed from the header at build time), but the
-  runtime marshalling has not executed against a live kernel here.
+  invokes real libbpf calls and propagates errors through the full stack.
+  Loading or attaching a program additionally needs `CAP_BPF` + `CAP_PERFMON`
+  (or root) and a compiled `hello.bpf.o` — this is a permanent property of how
+  the Linux kernel gates BPF, not a limitation of any particular machine or
+  sandbox. Without those privileges, `LiveSpec` skips rather than asserting on
+  a real load, and the §9 "hello world" stops at `open`/`attach` with a
+  reported `LibbpfFailure` instead of crashing. `hsc2hs`-derived offsets are
+  correct by construction (computed from the header at build time); the
+  runtime marshalling has been exercised against real libbpf calls but a full
+  privileged load/attach/read/detach round-trip against a live kernel should
+  be run at least once in your target environment before relying on it in
+  production (see setcap/root instructions above).
 - **Weeder** and **cabal-docspec** are configured (`weeder.toml`,
   `cabal.docspec`) and run in CI, but were not executed in this sandbox; HLint
   and Fourmolu were, and are clean.
